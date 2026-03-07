@@ -188,7 +188,7 @@ class Database:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 "SELECT * FROM workout_sessions WHERE user_id=? "
-                "AND date >= date('now', 'weekday 0', '-6 days') ORDER BY date",
+                "AND date >= date('now', '-6 days') ORDER BY date",
                 (user_id,)
             )
             rows = await cursor.fetchall()
@@ -198,7 +198,7 @@ class Database:
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
                 "SELECT COUNT(*) FROM workout_sessions WHERE user_id=? "
-                "AND date >= date('now', 'weekday 0', '-6 days')",
+                "AND date >= date('now', '-6 days')",
                 (user_id,)
             )
             row = await cursor.fetchone()
@@ -213,3 +213,84 @@ class Database:
             )
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
+
+    # ── Профиль питания ───────────────────────────────────────────────────────
+
+    async def save_nutrition_profile(self, user_id: int, profile: dict):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS nutrition_profiles (
+                    user_id INTEGER PRIMARY KEY,
+                    profile_json TEXT NOT NULL,
+                    updated_at TEXT DEFAULT (date('now'))
+                )
+            """)
+            await db.execute(
+                "INSERT OR REPLACE INTO nutrition_profiles (user_id, profile_json, updated_at) "
+                "VALUES (?, ?, date('now'))",
+                (user_id, json.dumps(profile, ensure_ascii=False))
+            )
+            await db.commit()
+
+    async def get_nutrition_profile(self, user_id: int) -> dict | None:
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS nutrition_profiles (
+                    user_id INTEGER PRIMARY KEY,
+                    profile_json TEXT NOT NULL,
+                    updated_at TEXT DEFAULT (date('now'))
+                )
+            """)
+            cursor = await db.execute(
+                "SELECT profile_json FROM nutrition_profiles WHERE user_id=?",
+                (user_id,)
+            )
+            row = await cursor.fetchone()
+            return json.loads(row[0]) if row else None
+
+    # ── Вес тела ──────────────────────────────────────────────────────────────
+
+    async def save_body_weight(self, user_id: int, weight: float):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS body_weight (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    weight REAL NOT NULL,
+                    date TEXT DEFAULT (date('now'))
+                )
+            """)
+            await db.execute(
+                "INSERT INTO body_weight (user_id, weight) VALUES (?, ?)",
+                (user_id, weight)
+            )
+            await db.commit()
+
+    async def get_body_weight_history(self, user_id: int, limit: int = 10) -> list:
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS body_weight (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    weight REAL NOT NULL,
+                    date TEXT DEFAULT (date('now'))
+                )
+            """)
+            cursor = await db.execute(
+                "SELECT weight, date FROM body_weight WHERE user_id=? ORDER BY date DESC LIMIT ?",
+                (user_id, limit)
+            )
+            rows = await cursor.fetchall()
+            return [{"weight": r[0], "date": r[1]} for r in rows]
+
+    async def get_latest_body_weight(self, user_id: int) -> float | None:
+        history = await self.get_body_weight_history(user_id, limit=1)
+        return history[0]["weight"] if history else None
+
+    async def get_all_user_ids(self) -> list:
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "SELECT DISTINCT user_id FROM workout_sessions"
+            )
+            rows = await cursor.fetchall()
+            return [r[0] for r in rows]
