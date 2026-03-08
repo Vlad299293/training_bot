@@ -13,6 +13,9 @@ from keyboards import (
     main_menu_kb, nutrition_menu_kb, gender_kb, activity_kb,
     phase_kb, budget_kb, training_day_kb, skip_kb
 )
+import os
+from aiogram.types import FSInputFile
+from menu_excel import generate_menu_excel
 from nutrition import (
     calculate_kbju, format_kbju_message,
     generate_weekly_menu, format_day_plan, generate_shopping_list_from_menu
@@ -255,14 +258,20 @@ def register_nutrition_handlers(dp: Dispatcher, db: Database):
                              ]]))
             return
 
-        await msg.answer("🤖 Составляю список покупок на основе меню недели...")
+        await msg.answer("🤖 Формирую меню и список покупок в Excel...")
         try:
             menu = await _get_or_generate_menu(msg.from_user.id, db)
             if not menu:
                 await msg.answer("❌ Ошибка. Попробуй снова.")
                 return
-            shopping = generate_shopping_list_from_menu(menu)
-            await msg.answer(shopping, parse_mode="Markdown")
+            kbju = calculate_kbju(profile)
+            path = generate_menu_excel(menu, profile, kbju)
+            await msg.answer_document(
+                FSInputFile(path, filename="menu_nedeli.xlsx"),
+                caption="📊 Меню на неделю + список покупок"
+            )
+            if os.path.exists(path):
+                os.remove(path)
         except Exception as e:
             logger.error(f"Ошибка: {e}")
             await msg.answer("❌ Ошибка при генерации. Попробуй снова.")

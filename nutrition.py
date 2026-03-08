@@ -193,7 +193,7 @@ def generate_weekly_menu(profile: dict, kbju: dict) -> dict:
 {{
   "days": [
     {{
-      "day": "Понедельник",
+      "day": "Понедельник",  // затем Вторник, Среда, Четверг, Пятница, Суббота, Воскресенье
       "type": "тренировочный",
       "meals": [
         {{
@@ -217,12 +217,23 @@ def generate_weekly_menu(profile: dict, kbju: dict) -> dict:
 }}"""
 
     text = _ask_ai(prompt, max_tokens=4000)
-    if text.startswith("```"):
+    # Чистим markdown если есть
+    if "```" in text:
         text = text.split("```")[1]
         if text.startswith("json"):
             text = text[4:]
     text = text.strip()
-    return json.loads(text)
+
+    # Обрезаем до последней валидной закрывающей скобки
+    last_brace = text.rfind('}')
+    last_bracket = text.rfind(']')
+    # Находим правильный конец JSON
+    for end in range(len(text), 0, -1):
+        try:
+            return json.loads(text[:end])
+        except json.JSONDecodeError:
+            continue
+    raise ValueError("Не удалось распарсить JSON от ИИ")
 
 
 def format_day_plan(weekly_menu: dict, day_index: int = 0) -> str:
