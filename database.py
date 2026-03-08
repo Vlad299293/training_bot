@@ -11,7 +11,19 @@ from config import DB_PATH
 class Database:
     def __init__(self):
         self.db_path = DB_PATH
+    async def add_user(self, user_id: int, username: str = "", first_name: str = ""):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "INSERT OR IGNORE INTO users (user_id, username, first_name) VALUES (?, ?, ?)",
+                (user_id, username or "", first_name or "")
+            )
+            await db.commit()
 
+    async def get_all_user_ids(self) -> list:
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("SELECT user_id FROM users")
+            rows = await cursor.fetchall()
+            return [r[0] for r in rows]
     async def init(self):
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("""
@@ -56,6 +68,14 @@ class Database:
                     exercise_name TEXT NOT NULL,
                     weight REAL NOT NULL,
                     date TEXT DEFAULT (date('now'))
+                )
+            """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
+                    created_at TEXT DEFAULT (date('now'))
                 )
             """)
             # Миграции — добавляем колонки если их нет
@@ -289,8 +309,11 @@ class Database:
 
     async def get_all_user_ids(self) -> list:
         async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute(
-                "SELECT DISTINCT user_id FROM workout_sessions"
-            )
+            # Берём из users И из workout_sessions — объединяем
+            cursor = await db.execute("""
+                SELECT user_id FROM users
+                UNION
+                SELECT user_id FROM workout_sessions
+            """)
             rows = await cursor.fetchall()
             return [r[0] for r in rows]

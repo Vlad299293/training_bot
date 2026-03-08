@@ -39,10 +39,11 @@ def plan_confirmation_kb() -> InlineKeyboardMarkup:
 def register_handlers(dp: Dispatcher, db: Database):
 
     # ── /start ────────────────────────────────────────────────────────────────
-
+    
     @dp.message(CommandStart())
     async def cmd_start(msg: Message, state: FSMContext):
         await state.clear()
+        await db.add_user(msg.from_user.id, msg.from_user.username, msg.from_user.first_name)
         await msg.answer(
             "👋 Привет! Я твой тренировочный бот.\n\n"
             "Что умею:\n"
@@ -587,7 +588,7 @@ def register_handlers(dp: Dispatcher, db: Database):
         await msg.answer("\n".join(lines), parse_mode="Markdown")
     # ── Админ ─────────────────────────────────────────────────────────────────
 
-    ADMIN_ID = 1101461656
+    ADMIN_ID = 1101461656  # замени на свой user_id
 
     @dp.message(Command("broadcast"))
     async def broadcast(msg: Message):
@@ -598,8 +599,7 @@ def register_handlers(dp: Dispatcher, db: Database):
             await msg.answer("Использование: /broadcast текст сообщения")
             return
         user_ids = await db.get_all_user_ids()
-        sent = 0
-        failed = 0
+        sent, failed = 0, 0
         for user_id in user_ids:
             try:
                 await msg.bot.send_message(user_id, text, parse_mode="Markdown")
