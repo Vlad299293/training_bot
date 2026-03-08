@@ -1,9 +1,8 @@
 """
 Модуль питания:
 - Расчёт КБЖУ по формуле Миффлина-Сан Жеора
-- Три фазы: набор массы / поддержание веса / уменьшение веса
-- Персональный план питания через ИИ
-- Список покупок на неделю
+- Генерация недельного меню (из него берётся план на день и список покупок)
+- Таблица КБЖУ продуктов на 100г в сухом/сыром виде
 """
 
 import json
@@ -20,6 +19,68 @@ ACTIVITY_LABELS = {
 ACTIVITY_COEFFICIENTS = {"low": 1.375, "moderate": 1.55, "high": 1.725}
 PHASE_LABELS = {"gain": "Набор массы", "maintain": "Поддержание веса", "loss": "Уменьшение веса"}
 PHASE_ADJUSTMENTS = {"gain": +250, "maintain": 0, "loss": -400}
+
+# Таблица КБЖУ на 100г продукта в сухом/сыром виде
+NUTRITION_TABLE = """
+ТАБЛИЦА КБЖУ ПРОДУКТОВ (на 100г в сухом или сыром виде):
+
+КРУПЫ И ЗЛАКИ (сухой вид):
+- Овсянка: 352 ккал | Б:12г | Ж:6г | У:60г
+- Гречка: 313 ккал | Б:13г | Ж:3г | У:62г
+- Рис белый: 344 ккал | Б:7г | Ж:1г | У:77г
+- Рис бурый: 337 ккал | Б:7г | Ж:3г | У:72г
+- Макароны: 338 ккал | Б:11г | Ж:2г | У:70г
+- Перловка: 320 ккал | Б:9г | Ж:1г | У:67г
+- Пшено: 348 ккал | Б:11г | Ж:4г | У:69г
+
+БЕЛКОВЫЕ ПРОДУКТЫ (сырой вид):
+- Куриная грудка: 113 ккал | Б:24г | Ж:2г | У:0г
+- Куриное бедро без кожи: 161 ккал | Б:20г | Ж:9г | У:0г
+- Говядина (вырезка): 158 ккал | Б:22г | Ж:7г | У:0г
+- Индейка филе: 84 ккал | Б:19г | Ж:1г | У:0г
+- Яйцо куриное (1шт=60г): 74 ккал | Б:6г | Ж:5г | У:0г
+- Творог 5%: 121 ккал | Б:17г | Ж:5г | У:2г
+- Творог 0%: 71 ккал | Б:16г | Ж:0г | У:2г
+- Тунец консервированный: 96 ккал | Б:22г | Ж:1г | У:0г
+- Лосось: 206 ккал | Б:20г | Ж:13г | У:0г
+- Минтай: 72 ккал | Б:16г | Ж:1г | У:0г
+- Греческий йогурт 2%: 73 ккал | Б:10г | Ж:2г | У:4г
+
+МОЛОЧНЫЕ ПРОДУКТЫ:
+- Молоко 2.5%: 52 ккал | Б:3г | Ж:3г | У:5г
+- Кефир 1%: 40 ккал | Б:3г | Ж:1г | У:4г
+- Сыр твёрдый: 360 ккал | Б:26г | Ж:28г | У:0г
+
+ЖИРЫ:
+- Масло оливковое: 884 ккал | Б:0г | Ж:100г | У:0г
+- Масло подсолнечное: 884 ккал | Б:0г | Ж:100г | У:0г
+- Арахисовая паста: 588 ккал | Б:25г | Ж:50г | У:20г
+- Грецкий орех: 654 ккал | Б:15г | Ж:65г | У:7г
+- Миндаль: 575 ккал | Б:21г | Ж:50г | У:13г
+- Авокадо: 160 ккал | Б:2г | Ж:15г | У:9г
+
+ОВОЩИ (сырой вид):
+- Брокколи: 34 ккал | Б:3г | Ж:0г | У:7г
+- Огурец: 15 ккал | Б:1г | Ж:0г | У:3г
+- Помидор: 20 ккал | Б:1г | Ж:0г | У:4г
+- Болгарский перец: 27 ккал | Б:1г | Ж:0г | У:6г
+- Морковь: 41 ккал | Б:1г | Ж:0г | У:10г
+- Капуста белокочанная: 28 ккал | Б:2г | Ж:0г | У:6г
+- Шпинат: 23 ккал | Б:3г | Ж:0г | У:4г
+- Кабачок: 24 ккал | Б:1г | Ж:0г | У:5г
+
+ФРУКТЫ:
+- Банан: 89 ккал | Б:1г | Ж:0г | У:23г
+- Яблоко: 52 ккал | Б:0г | Ж:0г | У:14г
+- Апельсин: 47 ккал | Б:1г | Ж:0г | У:12г
+
+ХЛЕБ:
+- Хлеб цельнозерновой: 247 ккал | Б:9г | Ж:3г | У:46г
+- Хлебцы рисовые: 360 ккал | Б:8г | Ж:2г | У:78г
+
+ПРИМЕЧАНИЕ: все крупы указаны в сухом виде. При варке вес увеличивается в 2.5-3 раза.
+Мясо и рыба — в сыром виде. При готовке вес уменьшается на 20-30%.
+"""
 
 
 def calculate_kbju(profile: dict) -> dict:
@@ -78,7 +139,7 @@ def format_kbju_message(profile: dict, kbju: dict) -> str:
     return "\n".join(lines)
 
 
-def _ask_ai(prompt: str, max_tokens: int = 2000) -> str:
+def _ask_ai(prompt: str, max_tokens: int = 3000) -> str:
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
@@ -87,76 +148,161 @@ def _ask_ai(prompt: str, max_tokens: int = 2000) -> str:
     return response.choices[0].message.content.strip()
 
 
-def generate_meal_plan(profile: dict, kbju: dict, is_training_day: bool = False) -> str:
-    cal = kbju["target_calories_training"] if is_training_day else kbju["target_calories"]
-    carbs = kbju["carbs_training"] if is_training_day else kbju["carbs"]
+def generate_weekly_menu(profile: dict, kbju: dict) -> dict:
+    """
+    Генерирует меню на 7 дней. Возвращает словарь с планом по дням.
+    Из него берётся и план на день и список покупок.
+    """
     allergies = ", ".join(profile.get("allergies", [])) or "нет"
     prefs = ", ".join(profile.get("preferences", [])) or "нет"
     budgets = {"low": "низкий (простые продукты)", "medium": "средний", "high": "без ограничений"}
     budget = budgets.get(profile.get("budget", "medium"), "средний")
-    day_type = "ТРЕНИРОВОЧНЫЙ ДЕНЬ" if is_training_day else "ДЕНЬ ОТДЫХА"
     gender = "мужчина" if profile["gender"] == "male" else "женщина"
     phase = PHASE_LABELS[profile["phase"]]
 
     prompt = f"""Ты одновременно опытный диетолог, нутрициолог и персональный тренер.
-Составь подробный план питания на один день.
+Составь меню питания на 7 дней (пн-вс).
 
 ПАРАМЕТРЫ СПОРТСМЕНА:
 - Пол: {gender}, Возраст: {profile["age"]} лет
 - Вес: {profile["weight"]} кг, Рост: {profile["height"]} см
 - Фаза: {phase}
-- Тип дня: {day_type}
 
-ЦЕЛИ КБЖУ:
-- Калории: {cal} ккал
-- Белки: {kbju["protein"]}г | Жиры: {kbju["fat"]}г | Углеводы: {carbs}г
+ЦЕЛИ КБЖУ НА ДЕНЬ:
+- Обычный день: {kbju["target_calories"]} ккал | Б:{kbju["protein"]}г | Ж:{kbju["fat"]}г | У:{kbju["carbs"]}г
+- Тренировочный день: {kbju["target_calories_training"]} ккал | У:{kbju["carbs_training"]}г
 
 ОГРАНИЧЕНИЯ:
-- Аллергены (исключить полностью): {allergies}
-- Предпочтения: {prefs}
-- Бюджет: {budget}
-
-ПРАВИЛА:
-1. 4-5 приёмов пищи: завтрак, перекус, обед, полдник, ужин
-2. {"После тренировки — обязательный приём белка + быстрых углеводов в течение 30-60 минут" if is_training_day else "День отдыха — меньше углеводов вечером, акцент на белок и полезные жиры"}
-3. Конкретные граммовки каждого продукта
-4. КБЖУ каждого приёма пищи
-5. Только российские продукты из обычного супермаркета
-6. Итоговый КБЖУ в конце и насколько близко к цели
-7. 1-2 практических совета для фазы "{phase}"
-
-Пиши структурированно на русском языке."""
-
-    return _ask_ai(prompt, max_tokens=2000)
-
-
-def generate_shopping_list(profile: dict, kbju: dict, days: int = 7) -> str:
-    allergies = ", ".join(profile.get("allergies", [])) or "нет"
-    prefs = ", ".join(profile.get("preferences", [])) or "нет"
-    budgets = {"low": "низкий", "medium": "средний", "high": "без ограничений"}
-    budget = budgets.get(profile.get("budget", "medium"), "средний")
-
-    prompt = f"""Ты опытный нутрициолог. Составь список покупок на {days} дней.
-
-ПАРАМЕТРЫ:
-- Фаза: {PHASE_LABELS[profile["phase"]]}
-- Калории: ~{kbju["target_calories"]} ккал/день
-- Б/Ж/У: {kbju["protein"]}г / {kbju["fat"]}г / {kbju["carbs"]}г
 - Аллергены (исключить): {allergies}
 - Предпочтения: {prefs}
 - Бюджет: {budget}
 
-Список по категориям с количеством на {days} дней.
-Только продукты из российского супермаркета.
+{NUTRITION_TABLE}
 
-🥩 Белки (мясо, рыба, яйца, молочное)
-🥦 Овощи и зелень
-🍚 Крупы и углеводы
-🥑 Жиры (масла, орехи)
-🍎 Фрукты
-🧂 Специи и добавки
+ПРАВИЛА:
+1. Используй ТОЛЬКО продукты из таблицы выше для расчёта КБЖУ
+2. Все граммовки крупы и злаков — в СУХОМ виде
+3. Мясо и рыба — в СЫРОМ виде
+4. 4-5 приёмов пищи в день: завтрак, перекус, обед, полдник, ужин
+5. Чередуй продукты по дням — не повторяй одно и то же каждый день
+6. Считай КБЖУ строго по таблице выше
+7. Пн, Ср, Пт — тренировочные дни (больше углеводов)
+8. Вт, Чт, Сб, Вс — дни отдыха
 
-В конце — примерная стоимость при бюджете "{budget}".
-Отвечай на русском языке."""
+Ответь СТРОГО в формате JSON без markdown:
+{{
+  "days": [
+    {{
+      "day": "Понедельник",
+      "type": "тренировочный",
+      "meals": [
+        {{
+          "name": "Завтрак",
+          "items": [
+            {{"product": "Овсянка", "amount": 80, "unit": "г сухой"}},
+            {{"product": "Яйцо куриное", "amount": 2, "unit": "шт"}}
+          ],
+          "calories": 450,
+          "protein": 22,
+          "fat": 12,
+          "carbs": 58
+        }}
+      ],
+      "total_calories": 2800,
+      "total_protein": 160,
+      "total_fat": 80,
+      "total_carbs": 320
+    }}
+  ]
+}}"""
 
-    return _ask_ai(prompt, max_tokens=1500)
+    text = _ask_ai(prompt, max_tokens=4000)
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+    text = text.strip()
+    return json.loads(text)
+
+
+def format_day_plan(weekly_menu: dict, day_index: int = 0) -> str:
+    """Форматирует план питания на конкретный день из недельного меню."""
+    days = weekly_menu.get("days", [])
+    if not days or day_index >= len(days):
+        return "❌ День не найден в меню"
+
+    day = days[day_index]
+    lines = [
+        f"🍽️ *{day['day']}* — {day.get('type', '')}",
+        f"🎯 Итого: {day['total_calories']} ккал | "
+        f"Б:{day['total_protein']}г | Ж:{day['total_fat']}г | У:{day['total_carbs']}г",
+        ""
+    ]
+
+    for meal in day.get("meals", []):
+        lines.append(f"*{meal['name']}* — {meal['calories']} ккал")
+        for item in meal.get("items", []):
+            lines.append(f"  • {item['product']}: {item['amount']} {item['unit']}")
+        lines.append(
+            f"  _Б:{meal['protein']}г | Ж:{meal['fat']}г | У:{meal['carbs']}г_"
+        )
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def generate_shopping_list_from_menu(weekly_menu: dict) -> str:
+    """Генерирует список покупок на основе недельного меню."""
+    # Собираем все продукты из меню
+    products = {}
+    for day in weekly_menu.get("days", []):
+        for meal in day.get("meals", []):
+            for item in meal.get("items", []):
+                key = item["product"]
+                amount = item["amount"]
+                unit = item["unit"]
+                if key in products:
+                    products[key]["amount"] += amount
+                else:
+                    products[key] = {"amount": amount, "unit": unit}
+
+    # Форматируем список
+    lines = ["🛒 *Список покупок на неделю*\n"]
+    lines.append("_Рассчитано точно по меню на 7 дней:_\n")
+
+    # Категории
+    categories = {
+        "🥩 Белки": ["Куриная грудка", "Куриное бедро", "Говядина", "Индейка", "Яйцо",
+                      "Творог", "Тунец", "Лосось", "Минтай", "Греческий йогурт"],
+        "🍚 Крупы": ["Овсянка", "Гречка", "Рис белый", "Рис бурый", "Макароны",
+                      "Перловка", "Пшено", "Хлеб", "Хлебцы"],
+        "🥦 Овощи": ["Брокколи", "Огурец", "Помидор", "Болгарский перец", "Морковь",
+                      "Капуста", "Шпинат", "Кабачок"],
+        "🍎 Фрукты": ["Банан", "Яблоко", "Апельсин"],
+        "🥑 Жиры": ["Масло оливковое", "Масло подсолнечное", "Арахисовая паста",
+                     "Грецкий орех", "Миндаль", "Авокадо"],
+        "🥛 Молочное": ["Молоко", "Кефир", "Сыр", "Йогурт"],
+    }
+
+    categorized = set()
+    for cat_name, cat_products in categories.items():
+        cat_items = []
+        for prod_name, data in products.items():
+            for cat_prod in cat_products:
+                if cat_prod.lower() in prod_name.lower():
+                    cat_items.append(f"• {prod_name}: {round(data['amount'])} {data['unit']}")
+                    categorized.add(prod_name)
+                    break
+        if cat_items:
+            lines.append(f"*{cat_name}:*")
+            lines.extend(cat_items)
+            lines.append("")
+
+    # Остальные продукты
+    other = [f"• {k}: {round(v['amount'])} {v['unit']}"
+             for k, v in products.items() if k not in categorized]
+    if other:
+        lines.append("*🧂 Прочее:*")
+        lines.extend(other)
+
+    return "\n".join(lines)

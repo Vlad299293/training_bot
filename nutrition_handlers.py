@@ -1,6 +1,8 @@
 """Обработчики модуля питания."""
 
+import json
 import logging
+from datetime import datetime
 from aiogram import Dispatcher, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -11,9 +13,46 @@ from keyboards import (
     main_menu_kb, nutrition_menu_kb, gender_kb, activity_kb,
     phase_kb, budget_kb, training_day_kb, skip_kb
 )
-from nutrition import calculate_kbju, format_kbju_message, generate_meal_plan, generate_shopping_list
+from nutrition import (
+    calculate_kbju, format_kbju_message,
+    generate_weekly_menu, format_day_plan, generate_shopping_list_from_menu
+)
 
 logger = logging.getLogger(__name__)
+
+# Кэш недельного меню в памяти: user_id -> {"menu": dict, "date": str}
+weekly_menu_cache = {}
+
+
+def _get_today_index() -> int:
+    """0=пн, 6=вс"""
+    return datetime.now().weekday()
+
+
+def _get_week_key() -> str:
+    """Ключ текущей недели для кэша."""
+    now = datetime.now()
+    return f"{now.year}-W{now.isocalendar()[1]}"
+
+
+async def _get_or_generate_menu(user_id: int, db: Database) -> dict | None:
+    """Возвращает меню из кэша или генерирует новое."""
+    week_key = _get_week_key()
+    cached = weekly_menu_cache.get(user_id)
+
+    if cached and cached.get("week") == week_key:
+        return cached["menu"]
+
+    # Генерируем новое меню
+    profile = await db.get_nutrition_profile(user_id)
+    if not profile:
+        return None
+
+    kbju = calculate_kbju(profile)
+    menu = generate_weekly_menu(profile, kbju)
+
+    weekly_menu_cache[user_id] = {"menu": menu, "week": week_key}
+    return menu
 
 
 def register_nutrition_handlers(dp: Dispatcher, db: Database):
@@ -157,6 +196,8 @@ def register_nutrition_handlers(dp: Dispatcher, db: Database):
             "budget": call.data.split(":")[1],
         }
         await db.save_nutrition_profile(call.from_user.id, profile)
+        # Сбрасываем кэш меню при обновлении профиля
+        weekly_menu_cache.pop(call.from_user.id, None)
         kbju = calculate_kbju(profile)
         await call.message.answer(
             "✅ *Профиль сохранён!*\n\n" + format_kbju_message(profile, kbju),
@@ -177,10 +218,10 @@ def register_nutrition_handlers(dp: Dispatcher, db: Database):
         kbju = calculate_kbju(profile)
         await msg.answer(format_kbju_message(profile, kbju), parse_mode="Markdown")
 
-    # ── План питания ──────────────────────────────────────────────────────────
+    # ── План питания на сегодня ───────────────────────────────────────────────
 
     @dp.message(F.text == "🍽️ План питания на сегодня")
-    async def meal_plan_start(msg: Message):
+    async def meal_plan_today(msg: Message):
         profile = await db.get_nutrition_profile(msg.from_user.id)
         if not profile:
             await msg.answer("Сначала настрой профиль.",
@@ -188,26 +229,19 @@ def register_nutrition_handlers(dp: Dispatcher, db: Database):
                                  InlineKeyboardButton(text="⚙️ Настроить", callback_data="nutrition_setup")
                              ]]))
             return
-        await msg.answer("Какой сегодня день?", reply_markup=training_day_kb())
 
-    @dp.callback_query(F.data.startswith("daytype:"))
-    async def meal_plan_generate(call: CallbackQuery):
-        is_training = call.data == "daytype:training"
-        profile = await db.get_nutrition_profile(call.from_user.id)
-        if not profile:
-            await call.answer("Профиль не найден", show_alert=True)
-            return
-        await call.message.edit_reply_markup(reply_markup=None)
-        await call.message.answer("🤖 Составляю план питания...")
+        await msg.answer("🤖 Составляю план питания на неделю, это займёт ~30 секунд...")
         try:
-            kbju = calculate_kbju(profile)
-            plan = generate_meal_plan(profile, kbju, is_training_day=is_training)
-            label = "🏋️ тренировочный день" if is_training else "😴 день отдыха"
-            await call.message.answer(f"🍽️ *План питания — {label}*\n\n{plan}",
-                                      parse_mode="Markdown")
+            menu = await _get_or_generate_menu(msg.from_user.id, db)
+            if not menu:
+                await msg.answer("❌ Ошибка. Попробуй снова.")
+                return
+            day_index = _get_today_index()
+            plan_text = format_day_plan(menu, day_index)
+            await msg.answer(plan_text, parse_mode="Markdown")
         except Exception as e:
             logger.error(f"Ошибка генерации плана питания: {e}")
-            await call.message.answer("❌ Ошибка при генерации. Попробуй снова.")
+            await msg.answer("❌ Ошибка при генерации. Попробуй снова.")
 
     # ── Список покупок ────────────────────────────────────────────────────────
 
@@ -220,12 +254,33 @@ def register_nutrition_handlers(dp: Dispatcher, db: Database):
                                  InlineKeyboardButton(text="⚙️ Настроить", callback_data="nutrition_setup")
                              ]]))
             return
-        await msg.answer("🤖 Составляю список покупок на неделю...")
+
+        await msg.answer("🤖 Составляю список покупок на основе меню недели...")
         try:
-            kbju = calculate_kbju(profile)
-            shopping = generate_shopping_list(profile, kbju)
-            await msg.answer(f"🛒 *Список покупок на 7 дней*\n\n{shopping}",
-                             parse_mode="Markdown")
+            menu = await _get_or_generate_menu(msg.from_user.id, db)
+            if not menu:
+                await msg.answer("❌ Ошибка. Попробуй снова.")
+                return
+            shopping = generate_shopping_list_from_menu(menu)
+            await msg.answer(shopping, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Ошибка: {e}")
+            await msg.answer("❌ Ошибка при генерации. Попробуй снова.")
+
+    # ── Обновить меню вручную ─────────────────────────────────────────────────
+
+    @dp.message(F.text == "🔄 Обновить меню")
+    async def refresh_menu(msg: Message):
+        weekly_menu_cache.pop(msg.from_user.id, None)
+        await msg.answer("🤖 Генерирую новое меню на неделю...")
+        try:
+            menu = await _get_or_generate_menu(msg.from_user.id, db)
+            if not menu:
+                await msg.answer("❌ Ошибка. Попробуй снова.")
+                return
+            day_index = _get_today_index()
+            plan_text = format_day_plan(menu, day_index)
+            await msg.answer("✅ Меню обновлено!\n\n" + plan_text, parse_mode="Markdown")
         except Exception as e:
             logger.error(f"Ошибка: {e}")
             await msg.answer("❌ Ошибка при генерации. Попробуй снова.")
@@ -274,6 +329,7 @@ def register_nutrition_handlers(dp: Dispatcher, db: Database):
         if profile:
             profile["weight"] = weight
             await db.save_nutrition_profile(msg.from_user.id, profile)
+            weekly_menu_cache.pop(msg.from_user.id, None)
 
     # ── История веса ──────────────────────────────────────────────────────────
 
