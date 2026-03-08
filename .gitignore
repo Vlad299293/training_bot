@@ -1,4 +1,4 @@
 .env
 *.db
-secrets.py
+_keys.py
 __pycache__/
